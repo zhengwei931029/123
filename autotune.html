@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🎵 自動調音 App</title>
+  <style>
+    body {
+      background-color: #111;
+      color: #fff;
+      font-family: "Segoe UI", sans-serif;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    h1 { font-size: 2em; margin-bottom: 10px; }
+    p { font-size: 1.2em; margin: 5px; }
+    .note { font-size: 3em; margin: 10px 0; color: #00ff99; }
+    .detune { font-size: 1.5em; }
+  </style>
+</head>
+<body>
+  <h1>🎶 自動調音 App</h1>
+  <p>請允許使用麥克風，然後哼唱或彈奏樂器 🎤</p>
+  <div class="note" id="note">—</div>
+  <p id="freq">頻率：— Hz</p>
+  <p id="detune" class="detune">偏差：—</p>
+
+  <script>
+    const noteStrings = [
+      "C", "C#", "D", "D#", "E", "F",
+      "F#", "G", "G#", "A", "A#", "B"
+    ];
+
+    async function initTuner() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      const buffer = new Float32Array(analyser.fftSize);
+      const noteElem = document.getElementById("note");
+      const freqElem = document.getElementById("freq");
+      const detuneElem = document.getElementById("detune");
+
+      function autoCorrelate(buf, sampleRate) {
+        let SIZE = buf.length;
+        let rms = 0;
+        for (let i = 0; i < SIZE; i++) {
+          let val = buf[i];
+          rms += val * val;
+        }
+        rms = Math.sqrt(rms / SIZE);
+        if (rms < 0.01) return -1; // 太小聲無法判斷
+
+        let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+        for (let i = 0; i < SIZE / 2; i++) {
+          if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+        }
+        for (let i = 1; i < SIZE / 2; i++) {
+          if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+        }
+
+        buf = buf.slice(r1, r2);
+        SIZE = buf.length;
+        const c = new Array(SIZE).fill(0);
+        for (let i = 0; i < SIZE; i++) {
+          for (let j = 0; j < SIZE - i; j++) {
+            c[i] = c[i] + buf[j] * buf[j + i];
+          }
+        }
+
+        let d = 0; while (c[d] > c[d + 1]) d++;
+        let maxval = -1, maxpos = -1;
+        for (let i = d; i < SIZE; i++) {
+          if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+        }
+
+        let T0 = maxpos;
+        return sampleRate / T0;
+      }
+
+      function update() {
+        analyser.getFloatTimeDomainData(buffer);
+        const pitch = autoCorrelate(buffer, audioContext.sampleRate);
+        if (pitch > 0) {
+          const noteNum = 12 * (Math.log2(pitch / 440)) + 69;
+          const noteIndex = Math.round(noteNum) % 12;
+          const note = noteStrings[noteIndex];
+          const freq = pitch.toFixed(2);
+          const standardPitch = 440 * Math.pow(2, (Math.round(noteNum) - 69) / 12);
+          const detune = Math.round(1200 * Math.log2(pitch / standardPitch));
+
+          noteElem.textContent = note;
+          freqElem.textContent = `頻率：${freq} Hz`;
+          detuneElem.textContent = `偏差：${detune > 0 ? '+' : ''}${detune} cents`;
+          detuneElem.style.color = Math.abs(detune) < 10 ? "#00ff99" : "#ff6666";
+        } else {
+          noteElem.textContent = "—";
+          freqElem.textContent = "頻率：— Hz";
+          detuneElem.textContent = "偏差：—";
+          detuneElem.style.color = "#ccc";
+        }
+        requestAnimationFrame(update);
+      }
+      update();
+    }
+
+    initTuner().catch(err => {
+      alert("無法啟用麥克風：" + err.message);
+    });
+  </script>
+</body>
+</html>
